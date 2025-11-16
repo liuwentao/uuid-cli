@@ -26,8 +26,8 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-          
       # --- 关键修复 1 (A): 安装 GNU 工具链 (用于 Windows) ---
+      # (上一行 'override: true' 之后的缩进空行已被移除)
       - name: Install GNU linker (Windows)
         if: runner.os == 'Windows'
         run: rustup toolchain install stable-gnu
@@ -52,30 +52,27 @@ jobs:
           fi
         shell: bash # 在所有平台上统一使用 bash
 
-      - name: Package (Unix: Linux/macOS)
+      - name: PackageUnix
         if: runner.os != 'Windows'
         run: |
-          set -euo pipefail
-          rm -rf dist || true
-          mkdir -p dist
-          arch=$(uname -m)
-          case "$arch" in
-          x86_64) arch=amd64 ;;
-          aarch64|arm64) arch=arm64 ;;
-          *) arch=$arch ;;
-          esac
-          
-          # 名称已匹配: 'uuid-cli'
-          BIN=target/release/uuid-cli
-          
-          if [ ! -f "$BIN" ]; then
-            echo "Binary not found: $BIN" >&2
-            ls -l target/release
-            exit 1
-          fi
-          cp "$BIN" dist/uuid-cli
-          tar -czf "dist/uuid-cli-${{ matrix.os }}-${arch}-${{ github.ref_name }}.tar.gz" -C dist uuid-cli
-          sha256sum dist/* > dist/checksums-${{ matrix.os }}-${arch}-${{ github.ref_name }}.txt
+            set -euo pipefail
+            rm -rf dist || true
+            mkdir -p dist
+            arch=$(uname -m)
+            case "$arch" in
+            x86_64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) arch=$arch ;;
+            esac
+            BIN=target/release/uuid-cli
+            if [ ! -f "$BIN" ]; then
+              echo "Binary not found: $BIN" >&2
+              ls -l target/release
+              exit 1
+            fi
+            cp "$BIN" dist/uuid-cli
+            tar -czf "dist/uuid-cli-${{ matrix.os }}-${arch}-${{ github.ref_name }}.tar.gz" -C dist uuid-cli
+            sha256sum dist/* > dist/checksums-${{ matrix.os }}-${arch}-${{ github.ref_name }}.txt
         shell: bash
 
       - name: Package (Windows)
@@ -105,7 +102,6 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          # 名称已匹配: 'uuid-cli'
           name: uuid-cli-${{ matrix.os }}
           path: dist/*
 
@@ -113,22 +109,3 @@ jobs:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist # 下载到 dist 目录
-
-      - name: Create GitHub Release and upload assets
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          
-          # --- 关键修复 2: 使用 'dist/*/*' 来上传子目录中的所有文件 ---
-          files: dist/*/*
-          
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
