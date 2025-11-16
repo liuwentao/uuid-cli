@@ -26,6 +26,11 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+          
+      # --- 关键修复 1 (A): 安装 GNU 工具链 (用于 Windows) ---
+      - name: Install GNU linker (Windows)
+        if: runner.os == 'Windows'
+        run: rustup toolchain install stable-gnu
 
       - name: Cache Cargo registry & index
         uses: actions/cache@v4
@@ -36,7 +41,16 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build (release)
-        run: cargo build --release
+        # --- 关键修复 1 (B): 在 Windows 上使用 GNU 工具链编译 ---
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            # 明确指定 gnu 目标和输出目录
+            cargo build --release --target-dir=target --target=x86_64-pc-windows-gnu
+          else
+            # Linux/macOS 使用默认设置
+            cargo build --release --target-dir=target
+          fi
+        shell: bash # 在所有平台上统一使用 bash
 
       - name: Package (Unix: Linux/macOS)
         if: runner.os != 'Windows'
@@ -44,23 +58,23 @@ jobs:
           set -euo pipefail
           rm -rf dist || true
           mkdir -p dist
-          # determine arch name
           arch=$(uname -m)
           case "$arch" in
-        x86_64) arch=amd64 ;;
-        aarch64|arm64) arch=arm64 ;;
-        *) arch=$arch ;;
+          x86_64) arch=amd64 ;;
+          aarch64|arm64) arch=arm64 ;;
+          *) arch=$arch ;;
           esac
+          
+          # 名称已匹配: 'uuid-cli'
           BIN=target/release/uuid-cli
+          
           if [ ! -f "$BIN" ]; then
             echo "Binary not found: $BIN" >&2
             ls -l target/release
             exit 1
           fi
-          # copy and tar.gz with descriptive name
-          cp "$BIN" dist/uuid-cli || true
+          cp "$BIN" dist/uuid-cli
           tar -czf "dist/uuid-cli-${{ matrix.os }}-${arch}-${{ github.ref_name }}.tar.gz" -C dist uuid-cli
-          # generate checksum
           sha256sum dist/* > dist/checksums-${{ matrix.os }}-${arch}-${{ github.ref_name }}.txt
         shell: bash
 
@@ -69,16 +83,18 @@ jobs:
         run: |
           Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $bin = 'target\release\uuid-cli.exe'
+          
+          # --- 关键修复 1 (C): 指向 gnu 编译的正确路径 ---
+          $bin = 'target\x86_64-pc-windows-gnu\release\uuid-cli.exe'
+          
           if (-Not (Test-Path $bin)) {
-            Write-Error "Binary not found: $bin"; Get-ChildItem target\release | Write-Output; exit 1
+            Write-Error "Binary not found: $bin"; Get-ChildItem -Recurse target | Write-Output; exit 1
           }
           Copy-Item -Path $bin -Destination dist\ -Force
           $arch = $env:PROCESSOR_ARCHITECTURE
           if ($arch -eq 'AMD64') { $arch = 'amd64' }
           if ($arch -eq 'ARM64') { $arch = 'arm64' }
           Compress-Archive -Path dist\* -DestinationPath "dist\uuid-cli-${{ matrix.os }}-${arch}-${{ github.ref_name }}.zip" -Force
-          # generate checksum (SHA256)
           $checksums = Get-ChildItem dist | Where-Object { -Not $_.PSIsContainer } | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
             "{0}  {1}" -f $h.Hash, $_.Name
@@ -89,6 +105,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
+          # 名称已匹配: 'uuid-cli'
           name: uuid-cli-${{ matrix.os }}
           path: dist/*
 
@@ -102,13 +119,16 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          path: dist
+          path: dist # 下载到 dist 目录
 
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          files: dist/*
+          
+          # --- 关键修复 2: 使用 'dist/*/*' 来上传子目录中的所有文件 ---
+          files: dist/*/*
+          
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
