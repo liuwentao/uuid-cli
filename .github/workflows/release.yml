@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -37,20 +38,52 @@ jobs:
       - name: Build (release)
         run: cargo build --release
 
-      - name: Package (Linux/macOS)
+      - name: Package (Unix: Linux/macOS)
         if: runner.os != 'Windows'
         run: |
+          set -euo pipefail
+          rm -rf dist || true
           mkdir -p dist
-          cp target/release/uuid-cli dist/ || true
-          tar -czf dist/uuid-cli-${{ matrix.os }}-${{ github.ref_name }}.tar.gz -C dist uuid-cli
+          # determine arch name
+          arch=$(uname -m)
+          case "$arch" in
+        x86_64) arch=amd64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        *) arch=$arch ;;
+          esac
+          BIN=target/release/uuid-cli
+          if [ ! -f "$BIN" ]; then
+            echo "Binary not found: $BIN" >&2
+            ls -l target/release
+            exit 1
+          fi
+          # copy and tar.gz with descriptive name
+          cp "$BIN" dist/uuid-cli || true
+          tar -czf "dist/uuid-cli-${{ matrix.os }}-${arch}-${{ github.ref_name }}.tar.gz" -C dist uuid-cli
+          # generate checksum
+          sha256sum dist/* > dist/checksums-${{ matrix.os }}-${arch}-${{ github.ref_name }}.txt
         shell: bash
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
+          Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item -Path target\release\uuid-cli.exe -Destination dist\ -Force
-          Compress-Archive -Path dist\* -DestinationPath dist\uuid-cli-${{ matrix.os }}-${{ github.ref_name }}.zip -Force
+          $bin = 'target\release\uuid-cli.exe'
+          if (-Not (Test-Path $bin)) {
+            Write-Error "Binary not found: $bin"; Get-ChildItem target\release | Write-Output; exit 1
+          }
+          Copy-Item -Path $bin -Destination dist\ -Force
+          $arch = $env:PROCESSOR_ARCHITECTURE
+          if ($arch -eq 'AMD64') { $arch = 'amd64' }
+          if ($arch -eq 'ARM64') { $arch = 'arm64' }
+          Compress-Archive -Path dist\* -DestinationPath "dist\uuid-cli-${{ matrix.os }}-${arch}-${{ github.ref_name }}.zip" -Force
+          # generate checksum (SHA256)
+          $checksums = Get-ChildItem dist | Where-Object { -Not $_.PSIsContainer } | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "{0}  {1}" -f $h.Hash, $_.Name
+          }
+          $checksums | Out-File -FilePath dist\checksums-${{ matrix.os }}-${arch}-${{ github.ref_name }}.txt -Encoding ascii
         shell: pwsh
 
       - name: Upload build artifact
