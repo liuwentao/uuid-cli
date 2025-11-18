@@ -63,117 +63,11 @@ jobs:
           if ($arch -eq 'ARM64') { $arch = 'arm64' }
           $bin = 'target\release\uuid-cli.exe'
           if (-Not (Test-Path $bin)) {
-            Write-Error "Binary not found: $bin"; Get-ChildItem target\release | Write-Output; exit 1
-          name: Build and Release
-
-          on:
-            push:
-              tags:
-                - 'v*'
-            workflow_dispatch: {}
-
-          permissions:
-            contents: write
-
-          jobs:
-            build:
-              name: Build (${{ matrix.os }})
-              runs-on: ${{ matrix.os }}
-              strategy:
-                matrix:
-                  os: [ubuntu-latest, windows-latest, macos-latest]
-
-              steps:
-                - uses: actions/checkout@v4
-
-                - name: Install Rust
-                  uses: actions-rs/toolchain@v1
-                  with:
-                    profile: minimal
-                    toolchain: stable
-                    override: true
-
-                - name: Build (release)
-                  run: cargo build --release
-
-                - name: Package (Unix)
-                  if: runner.os != 'Windows'
-                  run: |
-                    set -euo pipefail
-                    rm -rf dist || true
-                    mkdir -p dist
-                    arch=$(uname -m)
-                    case "$arch" in
-                      x86_64) arch=amd64 ;;
-                      aarch64|arm64) arch=arm64 ;;
-                      *) arch=$arch ;;
-                    esac
-                    BIN=target/release/uuid-cli
-                    if [ ! -f "$BIN" ]; then
-                      echo "Binary not found: $BIN" >&2
-                      ls -l target/release
-                      exit 1
-                    fi
-                    cp "$BIN" dist/uuid-cli
-                    tar -czf "dist/uuid-cli-${{ matrix.os }}-${arch}-${{ github.ref_name }}.tar.gz" -C dist uuid-cli
-                    sha256sum dist/* > "dist/checksums-${{ matrix.os }}-${arch}-${{ github.ref_name }}.txt"
-                  shell: bash
-
-                - name: Package (Windows)
-                  if: runner.os == 'Windows'
-                  run: |
-                    Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
-                    New-Item -ItemType Directory -Force -Path dist | Out-Null
-                    $arch = $env:PROCESSOR_ARCHITECTURE
-                    if ($arch -eq 'AMD64') { $arch = 'amd64' }
-                    if ($arch -eq 'ARM64') { $arch = 'arm64' }
-                    $bin = 'target\release\uuid-cli.exe'
-                    if (-Not (Test-Path $bin)) {
-                      Write-Error "Binary not found: $bin"; Get-ChildItem target\release | Write-Output; exit 1
-                    }
-                    Copy-Item -Path $bin -Destination dist\ -Force
-                    Compress-Archive -Path dist\* -DestinationPath "dist\uuid-cli-${{ matrix.os }}-${arch}-${{ github.ref_name }}.zip" -Force
-                    $checksums = Get-ChildItem dist | Where-Object { -Not $_.PSIsContainer } | ForEach-Object {
-                      $h = Get-FileHash $_.FullName -Algorithm SHA256
-                      "{0}  {1}" -f $h.Hash, $_.Name
-                    }
-                    $checksums | Out-File -FilePath "dist\checksums-${{ matrix.os }}-${arch}-${{ github.ref_name }}.txt" -Encoding ascii
-                  shell: pwsh
-
-                - name: Upload build artifact
-                  uses: actions/upload-artifact@v4
-                  with:
-                    name: uuid-cli-${{ matrix.os }}
-                    path: dist/*
-
-            release:
-              name: Create GitHub Release
-              needs: build
-              runs-on: ubuntu-latest
-              steps:
-                - uses: actions/checkout@v4
-
-                - name: Download build artifacts
-                  uses: actions/download-artifact@v4
-                  with:
-                    path: dist
-
-                - name: Flatten downloaded artifacts
-                  run: |
-                    mkdir -p dist_all
-                    # Copy any files from nested artifact folders into dist_all
-                    find dist -type f -print0 | xargs -0 -I{} cp {} dist_all/ || true
-                    ls -la dist_all || true
-                  shell: bash
-
-                - name: Create GitHub Release and upload assets
-                  uses: softprops/action-gh-release@v1
-                  with:
-                    tag_name: ${{ github.ref_name }}
-                    name: ${{ github.ref_name }}
-                    files: dist_all/*
-                  env:
-                    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            Write-Error "Binary not found: $bin"
+            Get-ChildItem target\release | Write-Output
+            exit 1
+          }
+          Copy-Item -Path $bin -Destination dist\ -Force
           Compress-Archive -Path dist\* -DestinationPath "dist\uuid-cli-${{ matrix.os }}-${arch}-${{ github.ref_name }}.zip" -Force
           $checksums = Get-ChildItem dist | Where-Object { -Not $_.PSIsContainer } | ForEach-Object {
             $h = Get-FileHash $_.FullName -Algorithm SHA256
@@ -207,6 +101,7 @@ jobs:
           find dist -type f -print0 | xargs -0 -I{} cp {} dist_all/ || true
           ls -la dist_all || true
         shell: bash
+
       - name: Create GitHub Release and upload assets
         uses: softprops/action-gh-release@v1
         with:
